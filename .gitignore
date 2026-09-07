@@ -7,3 +7,10 @@ local.properties
 *.iml
 .externalNativeBuild/
 .cxx/
+.env
+
+# Environment secrets
+.env
+backend/.env
+__pycache__/
+*.pyc
