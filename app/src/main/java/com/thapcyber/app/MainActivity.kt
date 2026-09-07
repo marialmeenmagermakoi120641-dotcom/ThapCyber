@@ -107,7 +107,7 @@ fun ThapCyberApp() {
             try {
 
                 val connection = URL(
-                    "http://10.0.2.2:5001/check-url"
+                    "https://thapcyber.onrender.com/check-url"
                 ).openConnection() as HttpURLConnection
 
                 connection.requestMethod = "POST"
