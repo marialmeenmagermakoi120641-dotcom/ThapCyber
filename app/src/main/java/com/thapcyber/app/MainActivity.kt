@@ -157,6 +157,7 @@ fun ThapCyberApp() {
                             history.filter {
                                 it.url != scan.url
                             }.take(9)
+
                 }
 
             } catch (e: Exception) {
@@ -469,6 +470,8 @@ fun ScanStat(
     value: Int
 ) {
 
+
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -482,8 +485,5 @@ fun ScanStat(
             text = value.toString(),
             fontWeight = FontWeight.Bold
         )
-    }
-    fun loadScanHistory(context: Context): List<ScanResult> {
-        return emptyList()
     }
 }
