@@ -3,10 +3,14 @@ package com.thapcyber.app
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.content.Context
+import org.json.JSONArray
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,28 +18,40 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+
+data class ScanResult(
+    val url: String,
+    val risk: String,
+    val malicious: Int,
+    val suspicious: Int,
+    val harmless: Int,
+    val undetected: Int
+)
 
 class MainActivity : ComponentActivity() {
 
@@ -43,401 +59,431 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            ThapCyberApp()
+            MaterialTheme {
+                ThapCyberApp()
+            }
         }
     }
 }
 
-@androidx.compose.runtime.Composable
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun ThapCyberApp() {
+    val context = LocalContext.current
 
     var url by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf("") }
-    var risk by remember { mutableStateOf("") }
-
-    var malicious by remember { mutableStateOf(0) }
-    var suspicious by remember { mutableStateOf(0) }
-    var harmless by remember { mutableStateOf(0) }
-    var undetected by remember { mutableStateOf(0) }
-
     var loading by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf<ScanResult?>(null) }
+    var error by remember { mutableStateOf("") }
 
-    val backgroundColor = Color(0xFF071120)
-    val cardColor = Color(0xFF182844)
-    val purple = Color(0xFF7651C5)
+    var history by remember {
+        mutableStateOf<List<ScanResult>>(emptyList())
+    }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(backgroundColor)
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
 
-        Spacer(modifier = Modifier.height(20.dp))
+    fun checkUrl() {
 
-        Text(
-            text = "🛡️ ThapCyber",
-            fontSize = 27.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF29B6F6)
-        )
+        val cleanUrl = url.trim()
 
-        Spacer(modifier = Modifier.height(6.dp))
+        if (cleanUrl.isEmpty()) {
+            error = "Please enter a website URL."
+            result = null
+            return
+        }
 
-        Text(
-            text = "Your Personal Cybersecurity Assistant",
-            fontSize = 13.sp,
-            color = Color.LightGray
-        )
+        if (!cleanUrl.startsWith("http://") &&
+            !cleanUrl.startsWith("https://")) {
+            error = "Enter a valid URL starting with http:// or https://"
+            result = null
+            return
+        }
 
-        Spacer(modifier = Modifier.height(28.dp))
+        loading = true
+        error = ""
+        result = null
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = cardColor
+        Thread {
+
+            try {
+
+                val connection = URL(
+                    "http://10.0.2.2:5001/check-url"
+                ).openConnection() as HttpURLConnection
+
+                connection.requestMethod = "POST"
+                connection.setRequestProperty(
+                    "Content-Type",
+                    "application/json"
+                )
+                connection.doOutput = true
+                connection.connectTimeout = 10000
+                connection.readTimeout = 30000
+
+                val json = JSONObject()
+                json.put("url", cleanUrl)
+
+                connection.outputStream.use { output ->
+                    output.write(json.toString().toByteArray())
+                }
+
+                val responseCode = connection.responseCode
+
+                if (responseCode !in 200..299) {
+                    throw Exception("Server returned error $responseCode")
+                }
+
+                val response =
+                    connection.inputStream.bufferedReader().use {
+                        it.readText()
+                    }
+
+                val data = JSONObject(response)
+
+                val scan = ScanResult(
+                    url = data.optString("url", cleanUrl),
+                    risk = data.optString("risk", "Unknown"),
+                    malicious = data.optInt("malicious", 0),
+                    suspicious = data.optInt("suspicious", 0),
+                    harmless = data.optInt("harmless", 0),
+                    undetected = data.optInt("undetected", 0)
+                )
+
+                Handler(Looper.getMainLooper()).post {
+
+                    result = scan
+                    loading = false
+
+                    history = listOf(scan) +
+                            history.filter {
+                                it.url != scan.url
+                            }.take(9)
+                }
+
+            } catch (e: Exception) {
+
+                Handler(Looper.getMainLooper()).post {
+
+                    loading = false
+                    error =
+                        "Unable to connect to ThapCyber server. Make sure the backend is running."
+                }
+            }
+
+        }.start()
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = "ThapCyber",
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Cybersecurity URL Scanner",
+                            fontSize = 12.sp
+                        )
+                    }
+                }
             )
+        }
+    ) { padding ->
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
 
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
+            item {
 
-                Text(
-                    text = "Phishing URL Checker",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
+                Spacer(modifier = Modifier.height(10.dp))
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "Check a website URL using real VirusTotal threat intelligence before visiting it.",
-                    fontSize = 13.sp,
-                    color = Color.LightGray
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = {
-                        url = it
-                        errorMessage = ""
-                    },
+                Card(
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = {
-                        Text("Enter website URL")
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Button(
-                    onClick = {
-
-                        if (url.isBlank()) {
-                            errorMessage = "Please enter a URL"
-                            result = ""
-                            risk = ""
-                            return@Button
-                        }
-
-                        loading = true
-                        errorMessage = ""
-                        result = ""
-                        risk = ""
-
-                        malicious = 0
-                        suspicious = 0
-                        harmless = 0
-                        undetected = 0
-
-                        Thread {
-
-                            try {
-
-                                val endpoint =
-                                    URL("http://10.0.2.2:5001/check-url")
-
-                                val connection =
-                                    endpoint.openConnection() as HttpURLConnection
-
-                                connection.requestMethod = "POST"
-                                connection.connectTimeout = 10000
-                                connection.readTimeout = 30000
-                                connection.doOutput = true
-
-                                connection.setRequestProperty(
-                                    "Content-Type",
-                                    "application/json"
-                                )
-
-                                val jsonRequest = JSONObject()
-                                jsonRequest.put("url", url.trim())
-
-                                connection.outputStream.use { output ->
-                                    output.write(
-                                        jsonRequest
-                                            .toString()
-                                            .toByteArray(Charsets.UTF_8)
-                                    )
-                                }
-
-                                val responseCode = connection.responseCode
-
-                                val responseText =
-                                    if (responseCode in 200..299) {
-                                        connection.inputStream
-                                            .bufferedReader()
-                                            .use { it.readText() }
-                                    } else {
-                                        connection.errorStream
-                                            ?.bufferedReader()
-                                            ?.use { it.readText() }
-                                            ?: ""
-                                    }
-
-                                connection.disconnect()
-
-                                val jsonResponse =
-                                    if (responseText.isNotBlank()) {
-                                        JSONObject(responseText)
-                                    } else {
-                                        JSONObject()
-                                    }
-
-                                if (responseCode in 200..299) {
-
-                                    val returnedRisk =
-                                        jsonResponse.optString(
-                                            "risk",
-                                            "Unknown"
-                                        )
-
-                                    val returnedMessage =
-                                        jsonResponse.optString(
-                                            "message",
-                                            "Analysis completed"
-                                        )
-
-                                    val returnedMalicious =
-                                        jsonResponse.optInt(
-                                            "malicious",
-                                            0
-                                        )
-
-                                    val returnedSuspicious =
-                                        jsonResponse.optInt(
-                                            "suspicious",
-                                            0
-                                        )
-
-                                    val returnedHarmless =
-                                        jsonResponse.optInt(
-                                            "harmless",
-                                            0
-                                        )
-
-                                    val returnedUndetected =
-                                        jsonResponse.optInt(
-                                            "undetected",
-                                            0
-                                        )
-
-                                    Handler(Looper.getMainLooper()).post {
-
-                                        risk = returnedRisk
-                                        result = returnedMessage
-
-                                        malicious =
-                                            returnedMalicious
-
-                                        suspicious =
-                                            returnedSuspicious
-
-                                        harmless =
-                                            returnedHarmless
-
-                                        undetected =
-                                            returnedUndetected
-
-                                        loading = false
-                                    }
-
-                                } else {
-
-                                    val serverError =
-                                        jsonResponse.optString(
-                                            "error",
-                                            "Server error"
-                                        )
-
-                                    Handler(Looper.getMainLooper()).post {
-
-                                        errorMessage =
-                                            "$serverError (HTTP $responseCode)"
-
-                                        loading = false
-                                    }
-                                }
-
-                            } catch (e: Exception) {
-
-                                Handler(Looper.getMainLooper()).post {
-
-                                    errorMessage =
-                                        "Unable to connect to ThapCyber server"
-
-                                    loading = false
-                                }
-                            }
-
-                        }.start()
-                    },
-
-                    enabled = !loading,
-
-                    modifier = Modifier.fillMaxWidth(),
-
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = purple
+                    shape = RoundedCornerShape(18.dp),
+                    elevation = CardDefaults.cardElevation(
+                        defaultElevation = 4.dp
                     )
                 ) {
 
-                    if (loading) {
-
-                        CircularProgressIndicator(
-                            modifier = Modifier.height(20.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp
-                        )
-
-                    } else {
+                    Column(
+                        modifier = Modifier.padding(20.dp)
+                    ) {
 
                         Text(
-                            text = "Check URL",
+                            text = "Stay Safe Online",
+                            fontSize = 24.sp,
                             fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = "Check a website before visiting it using real threat intelligence from VirusTotal."
+                        )
+
+                        Spacer(modifier = Modifier.height(18.dp))
+
+                        OutlinedTextField(
+                            value = url,
+                            onValueChange = {
+                                url = it
+                                error = ""
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = {
+                                Text("Website URL")
+                            },
+                            placeholder = {
+                                Text("https://example.com")
+                            },
+                            singleLine = true
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = { checkUrl() },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !loading
+                        ) {
+
+                            if (loading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier
+                                        .width(20.dp)
+                                        .height(20.dp),
+                                    strokeWidth = 2.dp
+                                )
+
+                                Spacer(
+                                    modifier = Modifier.width(10.dp)
+                                )
+
+                                Text("Analyzing...")
+                            } else {
+                                Text("CHECK URL")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (error.isNotEmpty()) {
+
+                item {
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text(
+                            text = error,
+                            modifier = Modifier.padding(16.dp),
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
+            }
 
-                Spacer(modifier = Modifier.height(16.dp))
+            result?.let { scan ->
 
-                if (errorMessage.isNotEmpty()) {
-
-                    Text(
-                        text = errorMessage,
-                        color = Color(0xFFFF5252),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                if (risk.isNotEmpty()) {
-
-                    val riskColor = when {
-                        risk.contains("High", ignoreCase = true) ->
-                            Color(0xFFFF5252)
-
-                        risk.contains("Medium", ignoreCase = true) ->
-                            Color(0xFFFFC107)
-
-                        risk.contains("Low", ignoreCase = true) ->
-                            Color(0xFF69F0AE)
-
-                        else ->
-                            Color.LightGray
-                    }
+                item {
 
                     Text(
-                        text = "🟢 $risk",
-                        color = riskColor,
+                        text = "Security Analysis",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Text(
-                        text = result,
-                        color = Color.White,
-                        fontSize = 13.sp
-                    )
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp)
+                    ) {
 
-                    Spacer(modifier = Modifier.height(18.dp))
+                        Column(
+                            modifier = Modifier.padding(20.dp)
+                        ) {
 
-                    Text(
-                        text = "VirusTotal Analysis",
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                            Text(
+                                text = scan.risk,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Bold
+                            )
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
 
-                    AnalysisRow(
-                        label = "Malicious",
-                        value = malicious
-                    )
+                            Text(
+                                text = "VirusTotal analysis completed",
+                                fontWeight = FontWeight.Medium
+                            )
 
-                    AnalysisRow(
-                        label = "Suspicious",
-                        value = suspicious
-                    )
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                    AnalysisRow(
-                        label = "Harmless",
-                        value = harmless
-                    )
+                            Text(
+                                text = scan.url,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
 
-                    AnalysisRow(
-                        label = "Undetected",
-                        value = undetected
-                    )
+                            Spacer(modifier = Modifier.height(18.dp))
+
+                            Divider()
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            ScanStat(
+                                "Malicious",
+                                scan.malicious
+                            )
+
+                            ScanStat(
+                                "Suspicious",
+                                scan.suspicious
+                            )
+
+                            ScanStat(
+                                "Harmless",
+                                scan.harmless
+                            )
+
+                            ScanStat(
+                                "Undetected",
+                                scan.undetected
+                            )
+                        }
+                    }
                 }
             }
+
+            if (history.isNotEmpty()) {
+
+                item {
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "Recent Scans",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                items(history) { scan ->
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+
+                            Column(
+                                modifier = Modifier.weight(1f)
+                            ) {
+
+                                Text(
+                                    text = scan.url,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = FontWeight.Medium
+                                )
+
+                                Spacer(
+                                    modifier = Modifier.height(4.dp)
+                                )
+
+                                Text(
+                                    text = scan.risk,
+                                    fontSize = 13.sp
+                                )
+                            }
+
+                            Spacer(
+                                modifier = Modifier.width(10.dp)
+                            )
+
+                            Text(
+                                text = "${scan.malicious} threats",
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+
+                    Column(
+                        modifier = Modifier.padding(18.dp)
+                    ) {
+
+                        Text(
+                            text = "About ThapCyber",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "ThapCyber is a cybersecurity application designed to help users identify potentially malicious or suspicious website URLs before visiting them."
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "Powered by real-time VirusTotal threat intelligence."
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+            }
         }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text(
-            text = "ThapCyber • Cybersecurity Project",
-            color = Color.Gray,
-            fontSize = 12.sp
-        )
     }
 }
 
-@androidx.compose.runtime.Composable
-fun AnalysisRow(
-    label: String,
+@Composable
+fun ScanStat(
+    title: String,
     value: Int
 ) {
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 5.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
 
-        Text(
-            text = label,
-            color = Color.LightGray,
-            fontSize = 13.sp
-        )
+        Text(text = title)
 
         Text(
             text = value.toString(),
-            color = Color.White,
-            fontSize = 13.sp,
             fontWeight = FontWeight.Bold
         )
+    }
+    fun loadScanHistory(context: Context): List<ScanResult> {
+        return emptyList()
     }
 }
