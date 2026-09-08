@@ -15,3 +15,5 @@ backend/.env
 __pycache__/
 *.pyc
 .env
+*.jks
+app/release/
